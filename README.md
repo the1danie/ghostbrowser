@@ -10,6 +10,12 @@ GhostBrowser — open-source antidetect browser на `Electron + React + Supabas
 - прогревать cookie (Cookie Warmer);
 - импортировать/экспортировать профили JSON.
 
+## Авторство
+
+- Оригинальный автор проекта: **Daniyal Abuov** (GitHub: **[@the1danie](https://github.com/the1danie)**)
+- Контакт: **danielsioo75@gmail.com**
+- Отдельный файл с авторством: `AUTHORSHIP.md`
+
 ---
 
 ## Что внутри

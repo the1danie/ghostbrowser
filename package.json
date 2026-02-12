@@ -2,6 +2,7 @@
   "name": "ghostbrowser",
   "version": "1.0.0",
   "description": "Open-source antidetect browser — Dolphin Anty alternative",
+  "author": "Daniyal Abuov (@the1danie) <daniyalabuov@gmail.com>",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
