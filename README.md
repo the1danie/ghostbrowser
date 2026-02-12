@@ -1,263 +1,192 @@
 # GhostBrowser
 
-GhostBrowser — open-source antidetect browser (клон Dolphin Anty) на `Electron + React + Supabase + Playwright`.
+Open-source antidetect browser built with **Electron + React + Supabase + Playwright**.
 
-English guide: `README.en.md`
+## Features
 
-Проект позволяет:
-- управлять множеством браузерных профилей;
-- задавать/генерировать fingerprint (UA, платформа, гео, timezone, language, WebRTC и т.д.);
-- привязывать прокси к профилям;
-- запускать изолированные persistent-сессии;
-- прогревать cookie (Cookie Warmer);
-- импортировать/экспортировать профили JSON.
+- Manage multiple isolated browser profiles
+- Generate and customize fingerprints (UA, platform, geo, timezone, language, WebGL, Canvas, Audio, WebRTC, etc.)
+- Bind proxies to profiles (HTTP/HTTPS/SOCKS4/SOCKS5 with auth)
+- Launch persistent browser sessions with stealth CDP mode (system Chrome, no automation flags)
+- Cookie Warmer with human emulation (scrolling, clicking, random delays)
+- Import/export profiles as JSON
+- Bulk proxy import
 
-## Авторство
+## Author
 
-- Оригинальный автор проекта: **Daniyal Abuov** (GitHub: **[@the1danie](https://github.com/the1danie)**)
-- Контакт: **bombuuk@gmail.com**
-- Отдельный файл с авторством: `AUTHORSHIP.md`
-
----
-
-## Что внутри
-
-- **Desktop shell:** Electron
-- **UI:** React + TypeScript + Tailwind
-- **Backend:** Supabase (Auth + Postgres + RLS)
-- **Browser automation:** Playwright (Chromium)
+- **Daniyal Abuov** ([@the1danie](https://github.com/the1danie))
+- Contact: **bombuuk@gmail.com**
 
 ---
 
-## Быстрый старт (с нуля после `git clone`)
+## Tech Stack
 
-### 1. Требования
+| Layer | Technology |
+|-------|-----------|
+| Desktop shell | Electron |
+| UI | React + TypeScript + Tailwind CSS |
+| Backend | Supabase (Auth + Postgres + RLS) |
+| Browser automation | Playwright / rebrowser-playwright (Chromium) |
 
-Нужно установить:
-- Node.js **18+** (рекомендуется LTS 20)
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js **18+** (LTS 20 recommended)
 - npm **9+**
 - Git
-- аккаунт в Supabase
+- Supabase account
 
-Проверка:
-
-```bash
-node -v
-npm -v
-```
-
-### 2. Клонирование и установка зависимостей
+### 1. Clone and install
 
 ```bash
-git clone <YOUR_REPO_URL>
+git clone https://github.com/the1danie/ghostbrowser.git
 cd ghostbrowser
-npm ci
-```
-
-Если `npm ci` недоступен (нет lock compatibility), можно:
-
-```bash
 npm install
 ```
 
-### 3. Настройка Supabase (обязательно)
+### 2. Set up Supabase
 
-1. Создай новый проект в Supabase.
-2. Открой **SQL Editor**.
-3. Выполни SQL из файла:
+1. Create a new project in [Supabase](https://supabase.com).
+2. Open **SQL Editor** and run the migration:
    - `supabase/migrations/001_initial.sql`
-4. В Supabase открой **Project Settings -> API** и скопируй:
+3. Go to **Project Settings > API** and copy:
    - `Project URL`
    - `anon public key`
 
-### 4. Настройка `.env`
-
-Скопируй пример:
+### 3. Configure `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Заполни свои значения:
+Fill in your values:
 
 ```env
 VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
 ```
 
-### 5. Запуск в dev-режиме (Electron + UI)
+### 4. Run in development mode
 
 ```bash
 npm run electron:dev
 ```
 
-После запуска:
-- зарегистрируй аккаунт (или войди);
-- создай прокси;
-- создай профиль;
-- запусти профиль.
+After launch: register an account, add a proxy, create a profile, and start it.
 
 ---
 
-## Подробная настройка Auth (Supabase)
+## Usage
 
-### Email/Password
+### Proxy Manager
 
-Работает сразу после создания проекта.
+`Proxies` > `Add Proxy`:
+- Supports `http/https/socks4/socks5` with optional username/password auth
+- `Check Proxy` auto-fills country/city via GeoIP
+- Bulk import formats: `protocol://user:pass@host:port`, `host:port:user:pass`, `host:port`
 
-### OAuth (Google/GitHub)
+### Browser Profiles
 
-Если нужен OAuth:
+`Profiles` > `New Profile`:
+- Name, group, tags, status, notes
+- Proxy selection (or no proxy)
+- Fingerprint editor: Geo, Timezone, Language, CPU/Memory, WebRTC, DNT, Canvas/Audio noise, WebGL, Fonts
 
-1. **Supabase -> Authentication -> Providers**: включить Google/GitHub, добавить client id/secret.
-2. **Supabase -> Authentication -> URL Configuration**: добавить Redirect URLs:
-   - `http://localhost:5173/login`
-   - `https://your-domain.com/login` (если есть web-deploy)
+### Launching a Profile
 
-Важно: в desktop production (когда app загружается из `file://`) OAuth redirect обычно требует отдельной схемы deep-link и доп. конфигурации. Базовый сценарий в этом репозитории рассчитан на `localhost`/web URL.
+- **Play** — start a browser session (stealth CDP mode using system Chrome)
+- **Stop** — close and save cookies
+- **Warm Cookies** — visit sites with human-like behavior
+- **Duplicate / Edit / Delete**
 
----
+Proxy is verified before each launch. If unreachable, launch is blocked.
 
-## Как пользоваться приложением
+### Cookie Warmer
 
-### 1) Proxy Manager
+- Select site categories or add custom URLs
+- Configure time-per-site range, max clicks, human emulation
+- Uses the running profile context when possible, or launches a dedicated browser
 
-`Proxies` -> `Add Proxy`:
-- поддержка `http/https/socks4/socks5`;
-- поддержка auth (`username/password`);
-- есть `Check Proxy`;
-- при проверке автозаполняются `country/city`;
-- прокси можно редактировать.
+### Settings
 
-Также есть `Bulk Import`:
-- `protocol://user:pass@host:port`
-- `host:port:user:pass`
-- `host:port`
-
-### 2) Browser Profiles
-
-`Profiles` -> `New Profile`:
-- базовые поля: name/group/tags/status/notes;
-- выбор прокси (или `No Proxy`);
-- fingerprint editor:
-  - Geo (включая `Kazakhstan`),
-  - Timezone,
-  - Language,
-  - CPU/Memory,
-  - WebRTC,
-  - DNT,
-  - Advanced (canvas/audio noise, fonts, webgl).
-
-### 3) Запуск профиля
-
-На карточке профиля:
-- `Play` — запуск браузерной сессии;
-- `Stop` — остановка и сохранение cookie;
-- `Warm Cookies` — прогрев сайтов;
-- `Duplicate`, `Edit`, `Delete`.
-
-Если у профиля указан прокси, запуск идет через этот прокси. Перед запуском выполняется проверка доступности прокси.
-
-### 4) Cookie Warmer
-
-Можно выбрать:
-- категории сайтов;
-- custom URLs;
-- диапазон времени на сайт;
-- число кликов;
-- human emulation.
-
-Если профиль уже запущен с нужным прокси, warmer использует текущий контекст. Если нужен другой прокси, поднимается отдельный warming browser через указанный прокси.
-
-### 5) Settings
-
-Раздел `Settings` содержит:
-- текущий email и user id;
-- путь локального хранилища профилей;
-- кнопку очистки orphan-папок (`Cleanup Orphans`).
+- Current user email and ID
+- Local profile storage path
+- Cleanup orphan profile data
 
 ---
 
-## Где хранятся данные
+## Data Storage
 
-- Серверные данные (profiles/proxies/auth): **Supabase**.
-- Локальные профили браузера (cookies/cache/storage):
-  - `{Electron userData}/browser-profiles/<profile-id>/`
+| Data | Location |
+|------|----------|
+| Profiles, proxies, auth | Supabase (cloud) |
+| Browser data (cookies, cache, localStorage) | `{Electron userData}/browser-profiles/<profile-id>/` |
 
-Путь можно посмотреть в `Settings`.
+Check the path in **Settings**.
 
 ---
 
-## Сборка production приложения
+## Building for Production
 
-### 1. Подготовить иконку (опционально, но рекомендуется)
+### Generate app icon (optional)
 
 ```bash
 npm run assets:icons
 ```
 
-Скрипт создаст:
-- `build/icon.png`
-
-### 2. Собрать приложение
+### Build
 
 ```bash
 npm run electron:build
 ```
 
-Артефакты будут в папке:
-- `release/`
-
-Типы таргетов в текущем конфиге:
+Output goes to `release/`. Targets:
 - macOS: `dmg`
 - Windows: `nsis`
 - Linux: `AppImage`
 
-Важно: код-сигнинг/notarization в этом репозитории не настроены автоматически.
-
 ---
 
-## Полезные команды
+## Useful Commands
 
 ```bash
-npm run dev            # только Vite (UI)
-npm run electron:dev   # Vite + Electron
-npm run build          # сборка фронта + electron ts
-npm run electron:build # production package
-npm run assets:icons   # генерация brand icon
+npm run dev              # Vite UI only
+npm run electron:dev     # Vite + Electron (development)
+npm run build            # Build frontend + Electron TypeScript
+npm run electron:build   # Production package
+npm run assets:icons     # Generate brand icon
 ```
 
 ---
 
-## Диагностика проблем
+## Troubleshooting
 
-### Бесконечная загрузка в браузерной сессии
+### Browser session hangs / infinite loading
 
-Почти всегда причина в прокси.
-Проверь:
-- `Proxies -> Check`;
-- корректность protocol (`http` vs `https`);
-- что прокси реально поддерживает HTTPS-трафик и авторизацию;
-- что нет rate-limit/банов у провайдера прокси.
+Almost always a proxy issue. Check:
+- `Proxies` > `Check` — is the proxy alive?
+- Correct protocol (`http` vs `https`)
+- Proxy supports HTTPS traffic and your auth credentials
+- No rate-limits or bans from the proxy provider
 
 ### `Electron API not available`
 
-Означает, что приложение открыто как web-only Vite без Electron preload. Запускай через:
+The app was opened as a web-only Vite dev server without Electron preload. Run via:
 
 ```bash
 npm run electron:dev
 ```
 
-### Ошибки Supabase / пустые таблицы
+### Supabase errors / empty tables
 
-Проверь:
-- выполнен ли `supabase/migrations/001_initial.sql`;
-- верные ли `VITE_SUPABASE_URL` и `VITE_SUPABASE_ANON_KEY`;
-- включены ли RLS policy (они создаются миграцией).
+- Ensure `supabase/migrations/001_initial.sql` was executed
+- Verify `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`
+- RLS policies are created by the migration
 
-### Playwright не запускает Chromium
-
-Если не скачался browser runtime:
+### Playwright can't launch Chromium
 
 ```bash
 npx playwright install chromium
@@ -265,25 +194,20 @@ npx playwright install chromium
 
 ---
 
-## Структура документации
+## Project Structure
 
-- `docs/architecture.md` — архитектура
-- `docs/project-structure.md` — структура проекта
-- `docs/database.md` — БД и RLS
+See `docs/` for detailed documentation:
+- `docs/architecture.md` — Architecture overview
+- `docs/project-structure.md` — File structure
+- `docs/database.md` — Database and RLS policies
 - `docs/electron-ipc.md` — IPC API
-- `docs/fingerprint-engine.md` — fingerprint engine
-- `docs/auth.md` — auth/OAuth
-- `docs/deploy-frontend.md` — deploy web frontend
-- `docs/coding-conventions.md` — кодстайл
+- `docs/fingerprint-engine.md` — Fingerprint engine
+- `docs/auth.md` — Authentication / OAuth
+- `docs/deploy-frontend.md` — Deploy web frontend
+- `docs/coding-conventions.md` — Coding style
 
 ---
 
-## Минимальный чеклист для нового разработчика
+## License
 
-1. `npm ci`
-2. создать Supabase-проект
-3. выполнить `supabase/migrations/001_initial.sql`
-4. заполнить `.env`
-5. `npm run electron:dev`
-6. создать тестовый proxy и профиль
-7. запустить профиль и убедиться, что трафик идет через прокси
+MIT
