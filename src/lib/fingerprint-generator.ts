@@ -1,21 +1,24 @@
 import type { BrowserFingerprint } from './supabase';
 
+// NOTE:
+// GhostBrowser launches profiles in system Google Chrome (Chromium engine).
+// Generating Firefox/Safari UAs leads to obvious inconsistencies (navigator values won't match),
+// so by default we only generate Chromium-based UAs here.
 const USER_AGENTS = [
+  // Windows (Chromium)
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
-  'Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+
+  // macOS (Chromium)
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+
+  // Linux (Chromium)
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 ];
 
 const SCREEN_RESOLUTIONS = [
@@ -101,6 +104,30 @@ function randomItem<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function detectHostOS(): 'win' | 'mac' | 'linux' | null {
+  // In Electron renderer this is available; in non-browser contexts we fall back to "no filter".
+  if (typeof navigator === 'undefined') return null;
+  const plat = (navigator.platform || '').toLowerCase();
+  if (plat.includes('win')) return 'win';
+  if (plat.includes('mac')) return 'mac';
+  if (plat.includes('linux')) return 'linux';
+  return null;
+}
+
+function pickCompatibleUserAgent(): string {
+  const hostOS = detectHostOS();
+
+  const filtered = USER_AGENTS.filter((ua) => {
+    if (!hostOS) return true;
+    if (hostOS === 'win') return ua.includes('Windows');
+    if (hostOS === 'mac') return ua.includes('Macintosh');
+    if (hostOS === 'linux') return ua.includes('X11') || ua.includes('Linux');
+    return true;
+  });
+
+  return randomItem(filtered.length > 0 ? filtered : USER_AGENTS);
+}
+
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -123,7 +150,7 @@ export function getLocaleDataForTimezone(timezone: string): { locale: string; la
 }
 
 export function generateFingerprint(overrides?: Partial<BrowserFingerprint>): BrowserFingerprint {
-  const ua = randomItem(USER_AGENTS);
+  const ua = pickCompatibleUserAgent();
   const timezone = randomItem(TIMEZONES);
   const localeData = getLocaleDataForTimezone(timezone);
   const webgl = randomItem(WEBGL_RENDERERS);
@@ -144,7 +171,7 @@ export function generateFingerprint(overrides?: Partial<BrowserFingerprint>): Br
     hardwareConcurrency: randomItem([2, 4, 6, 8, 12, 16]),
     deviceMemory: randomItem([2, 4, 8, 16]),
     platform,
-    doNotTrack: randomItem([null, '1']),
+    doNotTrack: null,
     canvasNoise: Math.random() * 0.05,
     audioNoise: Math.random() * 0.0001,
     webrtcPolicy: 'disable',

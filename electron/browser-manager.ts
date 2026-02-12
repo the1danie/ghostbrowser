@@ -1,6 +1,9 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import * as http from 'http';
+import * as https from 'https';
 import { app } from 'electron';
 import { generateInjectionScript } from '../src/lib/fingerprint-injector';
 import type { BrowserFingerprint } from '../src/lib/supabase';
@@ -8,11 +11,13 @@ import type { CookieWarmerConfig, WarmingProgress } from '../src/lib/cookie-warm
 
 interface RunningProfile {
   profileId: string;
-  context: BrowserContext;
+  context: BrowserContext | null;
   browser: Browser | null;
+  process: ChildProcess | null; // Chrome process when using Stealthy CDP mode
   proxyServer: string | null;
   pid: number;
   startedAt: number;
+  userDataDir: string;
 }
 
 interface ProfileData {
@@ -35,6 +40,36 @@ export class BrowserManager {
   private running = new Map<string, RunningProfile>();
   private warmingAbort = new Map<string, boolean>();
   private onProfileClosed: ProfileClosedCallback | null = null;
+
+  private async lookupGeoByIp(ip: string): Promise<{ country: string | null; city: string | null }> {
+    const endpoints = [
+      `https://ipapi.co/${ip}/json/`,
+      `https://ipwho.is/${ip}`,
+      `http://ip-api.com/json/${ip}?fields=status,countryCode,city`,
+    ];
+
+    for (const endpoint of endpoints) {
+      const payload = await requestJson(endpoint, 10000);
+      if (!payload || typeof payload !== 'object') continue;
+
+      const rawCountry =
+        payload.country_code ||
+        payload.countryCode ||
+        payload.country ||
+        null;
+
+      const rawCity = payload.city || null;
+
+      const country = normalizeCountryCode(rawCountry);
+      const city = typeof rawCity === 'string' ? rawCity : null;
+
+      if (country || city) {
+        return { country, city };
+      }
+    }
+
+    return { country: null, city: null };
+  }
 
   /** Register a callback that fires when a browser is closed externally (user closed the window) */
   setOnProfileClosed(cb: ProfileClosedCallback): void {
@@ -93,26 +128,10 @@ export class BrowserManager {
     }
 
     const userDataDir = this.getProfileDir(data.id);
+    const screenW = data.fingerprint.screenResolution?.width || 1920;
+    const screenH = data.fingerprint.screenResolution?.height || 1080;
 
-    const launchArgs: string[] = [
-      '--disable-blink-features=AutomationControlled',
-      '--no-first-run',
-      '--no-default-browser-check',
-      // Many authenticated proxies hang on Google endpoints with QUIC enabled.
-      '--disable-quic',
-    ];
-
-    const launchOptions: any = {
-      headless: false,
-      args: launchArgs,
-      userAgent: data.fingerprint.userAgent,
-      viewport: null,
-      locale: data.fingerprint.locale,
-      timezoneId: data.fingerprint.timezone,
-      colorScheme: 'dark',
-      ignoreHTTPSErrors: true,
-    };
-
+    // --- Proxy verification ---
     let effectiveProxy = data.proxy;
     if (data.proxy) {
       console.log('[GhostBrowser] Verifying proxy before launch...');
@@ -126,170 +145,161 @@ export class BrowserManager {
       }
     }
 
+    const injectionScript = generateInjectionScript(data.fingerprint);
+    const validCookies = (data.cookies || [])
+      .filter((c: any) => c.name && c.domain)
+      .map((c: any) => ({
+        name: c.name,
+        value: c.value || '',
+        domain: c.domain,
+        path: c.path || '/',
+        secure: c.secure || false,
+        httpOnly: c.httpOnly || false,
+        expires: c.expires && c.expires > 0 ? c.expires : undefined,
+        sameSite: (c.sameSite || 'Lax') as 'Strict' | 'Lax' | 'None',
+      }));
+
+    // --- Stealthy Playwright Mode: spawn Chrome with remote-debugging-port, then connect via CDP ---
+    // Browser is launched by us (not Playwright), so no automation detection flags.
+    // See playwright.md (SeleniumBase Stealthy Playwright Mode).
+    const chromePath = findSystemChrome();
+    if (!chromePath) {
+      throw new Error('Google Chrome not found. Install Chrome for Stealthy mode.');
+    }
+
+    const debugPort = 9222 + this.running.size;
+    const launchArgs: string[] = [
+      `--user-data-dir=${userDataDir}`,
+      `--remote-debugging-port=${debugPort}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-infobars',
+      '--disable-dev-shm-usage',
+      `--window-size=${screenW},${screenH}`,
+      '--disable-quic',
+      `--lang=${data.fingerprint.language}`,
+    ];
+
     if (effectiveProxy) {
       launchArgs.push(
-        // Avoid Google account/profile bootstrap over unstable proxies.
-        '--disable-sync',
-        '--disable-background-networking',
-        '--disable-component-update',
+        `--proxy-server=${effectiveProxy.protocol}://${effectiveProxy.host}:${effectiveProxy.port}`,
+        '--proxy-bypass-list=<-loopback>',
         '--disable-http2',
-        '--dns-prefetch-disable',
-        '--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,SigninIntercept,Sync',
+        '--dns-prefetch-disable'
       );
-      launchOptions.proxy = {
+      console.log('[GhostBrowser] Proxy config:', {
         server: `${effectiveProxy.protocol}://${effectiveProxy.host}:${effectiveProxy.port}`,
-        username: effectiveProxy.username || undefined,
-        password: effectiveProxy.password || undefined,
-      };
-      // Весь трафик через прокси, без обхода (как в обычном браузере)
-      launchArgs.push('--proxy-bypass-list=<-loopback>');
-      console.log('[GhostBrowser] Proxy config:', { server: launchOptions.proxy.server, hasAuth: !!(effectiveProxy.username && effectiveProxy.password) });
+        hasAuth: !!(effectiveProxy.username && effectiveProxy.password),
+      });
     } else {
       console.log('[GhostBrowser] No proxy configured');
     }
 
-    console.log('[GhostBrowser] Launching persistent profile...');
-    const context = await withTimeout(chromium.launchPersistentContext(userDataDir, launchOptions), 25000);
-    const browser = context.browser();
-    console.log('[GhostBrowser] Persistent context created OK');
+    console.log('[GhostBrowser] Stealthy mode: spawning Chrome with CDP...');
+    const proc = spawn(chromePath, launchArgs, {
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-    // Inject fingerprint script before any page loads
-    const injectionScript = generateInjectionScript(data.fingerprint);
-    await context.addInitScript(injectionScript);
-    console.log('[GhostBrowser] Fingerprint injected');
+    if (!proc.pid) {
+      throw new Error('Failed to spawn Chrome');
+    }
 
-    // Debug: track request timing to see why loads are slow or hanging
-    type ReqData = { start: number; timeout: NodeJS.Timeout };
-    const requestData = new Map<any, ReqData>();
+    proc.stderr?.on('data', (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line) console.log(`[Chrome:${proc.pid}] ${line}`);
+    });
 
-    context.on('request', (request) => {
-      const url = request.url();
-      const method = request.method();
-      const shortUrl = url.length > 90 ? url.substring(0, 90) + '…' : url;
-      const now = Date.now();
-      console.log(`[GhostBrowser] → Request START: ${method} ${shortUrl}`);
+    const cdpEndpoint = `http://127.0.0.1:${debugPort}`;
+    await waitForCDPPort(cdpEndpoint, 15000);
 
-      const t = setTimeout(() => {
-        if (requestData.has(request)) {
-          const elapsed = Math.round((Date.now() - now) / 1000);
-          console.log(`[GhostBrowser] ⏳ Request PENDING ${elapsed}s (no response): ${method} ${shortUrl}`);
+    const browser = await chromium.connectOverCDP(cdpEndpoint);
+    const contexts = browser.contexts();
+    const context = contexts[0] || await browser.newContext({
+      locale: data.fingerprint.locale || 'en-US',
+      timezoneId: data.fingerprint.timezone || 'America/New_York',
+    });
+
+    context.addInitScript(injectionScript);
+
+    if (validCookies.length > 0) {
+      try {
+        const cookiePayloads = validCookies
+          .filter((c: any) => c.name && c.domain && c.domain.trim() !== '')
+          .map((c: any) => {
+            const domain = (c.domain || '').replace(/^\\./, '').trim();
+            const url = 'http' + (c.secure ? 's' : '') + '://' + domain + (c.path || '/');
+            return { url, name: c.name, value: c.value, path: c.path || '/', secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite, expires: c.expires };
+          });
+        if (cookiePayloads.length > 0) {
+          await context.addCookies(cookiePayloads);
         }
-      }, 5000);
-      requestData.set(request, { start: now, timeout: t });
-    });
-
-    context.on('response', (response) => {
-      const request = response.request();
-      const data = requestData.get(request);
-      if (!data) return;
-      clearTimeout(data.timeout);
-      requestData.delete(request);
-      const durationMs = Date.now() - data.start;
-      const url = request.url();
-      const method = request.method();
-      const shortUrl = url.length > 70 ? url.substring(0, 70) + '…' : url;
-      const slow = durationMs > 3000 ? ' (SLOW!)' : '';
-      console.log(`[GhostBrowser] ← Response ${response.status()}: ${method} ${shortUrl} — ${durationMs}ms${slow}`);
-    });
-
-    context.on('requestfailed', (request) => {
-      const data = requestData.get(request);
-      if (data) {
-        clearTimeout(data.timeout);
-        requestData.delete(request);
-      }
-      const durationMs = data ? Date.now() - data.start : 0;
-      const err = request.failure()?.errorText || 'unknown';
-      const shortUrl = request.url().substring(0, 100);
-      console.log(`[GhostBrowser] ✗ Request FAILED (after ${durationMs}ms): ${request.method()} ${shortUrl} — ${err}`);
-    });
-
-    // Inject cookies if provided
-    if (data.cookies && data.cookies.length > 0) {
-      const validCookies = data.cookies
-        .filter((c: any) => c.name && c.domain)
-        .map((c: any) => ({
-          name: c.name,
-          value: c.value || '',
-          domain: c.domain,
-          path: c.path || '/',
-          secure: c.secure || false,
-          httpOnly: c.httpOnly || false,
-          expires: c.expires && c.expires > 0 ? c.expires : undefined,
-          sameSite: c.sameSite || 'Lax' as const,
-        }));
-      if (validCookies.length > 0) {
-        await context.addCookies(validCookies);
+      } catch (cookieErr: any) {
+        console.warn('[GhostBrowser] Failed to restore cookies:', cookieErr?.message);
       }
     }
 
-    // Ensure clean startup page (avoid restored tabs from previous run)
-    const existingPages = context.pages();
-    for (const existing of existingPages) {
-      await existing.close().catch(() => {});
-    }
-    const page = await withTimeout(context.newPage(), 10000);
-    await withTimeout(page.goto('about:blank', { waitUntil: 'domcontentloaded' }), 10000);
+    const pages = context.pages();
+    const page = pages[0] || await context.newPage();
+    await page.goto('https://www.google.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
 
-    const pid = ((browser as any)?.process?.()?.pid || 0);
-    this.running.set(data.id, {
+    console.log(`[GhostBrowser] Chrome launched (Stealthy CDP) PID ${proc.pid}`);
+
+    const profileEntry: RunningProfile = {
       profileId: data.id,
       context,
       browser,
-      proxyServer: launchOptions.proxy?.server || null,
-      pid,
+      process: proc,
+      proxyServer: effectiveProxy ? `${effectiveProxy.protocol}://${effectiveProxy.host}:${effectiveProxy.port}` : null,
+      pid: proc.pid,
       startedAt: Date.now(),
-    });
-
-    // Detect when the user closes the browser window manually
-    const onClosed = async () => {
-      // Only handle if still in our running map (not already closed via closeProfile)
-      if (!this.running.has(data.id)) return;
-
-      let cookies: any[] = [];
-      try {
-        // Save state before cleanup
-        await context.storageState({ path: path.join(userDataDir, 'state.json') });
-        cookies = await context.cookies();
-      } catch {
-        // Context may already be destroyed — that's OK
-      }
-
-      this.running.delete(data.id);
-
-      // Notify renderer so it can update UI + Supabase
-      if (this.onProfileClosed) {
-        this.onProfileClosed(data.id, cookies);
-      }
+      userDataDir,
     };
 
-    if (browser) {
-      browser.on('disconnected', onClosed);
-    } else {
-      context.on('close', onClosed);
-    }
+    this.running.set(data.id, profileEntry);
 
-    return { pid };
+    proc.on('exit', (code?: number) => {
+      console.log(`[GhostBrowser] Chrome process exited (code: ${code})`);
+      if (!this.running.has(data.id)) return;
+      this.running.delete(data.id);
+      if (this.onProfileClosed) this.onProfileClosed(data.id, []);
+    });
+
+    return { pid: proc.pid };
   }
 
   async closeProfile(profileId: string): Promise<any[]> {
     const instance = this.running.get(profileId);
     if (!instance) throw new Error('Profile is not running');
 
-    const userDataDir = this.getProfileDir(profileId);
+    this.running.delete(profileId);
 
-    // Save storage state (cookies, localStorage)
+    const userDataDir = instance.userDataDir;
     let cookies: any[] = [];
     try {
-      await instance.context.storageState({ path: path.join(userDataDir, 'state.json') });
-      cookies = await instance.context.cookies();
+      if (instance.context) {
+        await instance.context.storageState({ path: path.join(userDataDir, 'state.json') });
+        cookies = await instance.context.cookies();
+      }
     } catch {}
 
-    await instance.context.close().catch(() => {});
-    if (instance.browser) {
-      await instance.browser.close().catch(() => {});
+    await instance.context?.close().catch(() => {});
+    await instance.browser?.close().catch(() => {});
+
+    if (instance.process) {
+      instance.process.kill('SIGTERM');
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          instance.process?.kill('SIGKILL');
+          resolve();
+        }, 5000);
+        instance.process?.on('exit', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
     }
-    this.running.delete(profileId);
 
     return cookies;
   }
@@ -322,14 +332,16 @@ export class BrowserManager {
       ? `${config.proxy.protocol}://${config.proxy.host}:${config.proxy.port}`
       : null;
     let instance = this.running.get(config.profileId);
-    const shouldUseRunningInstance = !!instance && (
+
+    // For subprocess-based profiles (context is null), always launch a temp browser
+    const shouldUseRunningInstance = !!instance && !!instance.context && (
       !requestedProxyServer || instance.proxyServer === requestedProxyServer
     );
     let tempBrowser: Browser | null = null;
     let tempContext: BrowserContext | null = null;
 
     if (!shouldUseRunningInstance) {
-      if (instance && requestedProxyServer && instance.proxyServer !== requestedProxyServer) {
+      if (instance && instance.context && requestedProxyServer && instance.proxyServer !== requestedProxyServer) {
         console.log('[GhostBrowser] Running profile proxy differs from cookie warmer proxy. Launching dedicated warmer browser.');
       }
 
@@ -382,15 +394,20 @@ export class BrowserManager {
         profileId: config.profileId,
         context: tempContext,
         browser: tempBrowser,
+        process: null,
         proxyServer: launchOptions.proxy?.server || null,
-        pid: ((tempBrowser as any).process?.()?.pid || 0),
+        pid: ((tempBrowser as any)?.process?.() as any)?.pid ?? 0,
         startedAt: Date.now(),
+        userDataDir: this.getProfileDir(config.profileId),
       };
     } else {
       console.log('[GhostBrowser] Cookie warmer using running profile context');
     }
 
-    const { context } = instance;
+    const { context } = instance!;
+    if (!context) {
+      throw new Error('No browser context available for cookie warming');
+    }
 
     for (let i = 0; i < config.urls.length; i++) {
       if (this.warmingAbort.get(config.profileId)) {
@@ -580,16 +597,9 @@ export class BrowserManager {
         let country: string | null = null;
         let city: string | null = null;
         if (includeGeo) {
-          try {
-            const geoPage = await withTimeout(context.newPage(), 5000);
-            const geoResponse = await geoPage.goto(`https://ipapi.co/${data.ip}/json/`, { timeout: 10000 });
-            if (geoResponse?.ok()) {
-              const geoData = await geoResponse.json();
-              country = geoData.country_code || null;
-              city = geoData.city || null;
-            }
-            await geoPage.close().catch(() => {});
-          } catch {}
+          const geo = await this.lookupGeoByIp(data.ip);
+          country = geo.country;
+          city = geo.city;
         }
 
         return { ip: data.ip, country, city, latencyMs: latency, usedProtocol: protocol };
@@ -637,6 +647,10 @@ export class BrowserManager {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
@@ -652,4 +666,114 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms)
     ),
   ]);
+}
+
+function requestJson(url: string, timeoutMs = 10000): Promise<any | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: any | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    try {
+      const parsed = new URL(url);
+      const client = parsed.protocol === 'http:' ? http : https;
+      const req = client.get(
+        parsed,
+        {
+          headers: {
+            'User-Agent': 'GhostBrowser/1.0',
+            Accept: 'application/json',
+          },
+        },
+        (res) => {
+          const statusCode = res.statusCode || 0;
+          if (statusCode < 200 || statusCode >= 300) {
+            res.resume();
+            finish(null);
+            return;
+          }
+
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk) => {
+            body += chunk;
+          });
+          res.on('end', () => {
+            try {
+              finish(JSON.parse(body));
+            } catch {
+              finish(null);
+            }
+          });
+        }
+      );
+
+      req.setTimeout(timeoutMs, () => {
+        req.destroy();
+        finish(null);
+      });
+      req.on('error', () => finish(null));
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+function normalizeCountryCode(raw: any): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.length === 2) return trimmed.toUpperCase();
+  return null;
+}
+
+async function waitForCDPPort(endpoint: string, timeoutMs: number): Promise<void> {
+  const base = endpoint.replace(/\/$/, '');
+  const url = `${base}/json/version`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.webSocketDebuggerUrl) return;
+      }
+    } catch {}
+    await sleep(200);
+  }
+  throw new Error(`CDP endpoint ${endpoint} not ready after ${timeoutMs}ms`);
+}
+
+function findSystemChrome(): string | null {
+  const candidates: string[] =
+    process.platform === 'darwin'
+      ? [
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+          '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        ]
+      : process.platform === 'win32'
+        ? [
+            path.join(process.env['PROGRAMFILES'] || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            path.join(process.env['LOCALAPPDATA'] || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+          ]
+        : [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+            '/snap/bin/chromium',
+          ];
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      console.log('[GhostBrowser] Using Chrome:', candidate);
+      return candidate;
+    }
+  }
+  return null;
 }

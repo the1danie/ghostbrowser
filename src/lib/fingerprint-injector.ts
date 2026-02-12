@@ -7,71 +7,107 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
 
   const fp = ${JSON.stringify(fp)};
 
+  // Normalize UA version to the real Chrome version to avoid obvious inconsistencies
+  // (system Chrome version != Electron bundled Chromium version).
+  try {
+    const realUA = navigator.userAgent || '';
+    const fpUA = fp.userAgent || '';
+    const realIsChromium = /Chrome\\/[0-9.]+/.test(realUA);
+    const fpIsChromium = /Chrome\\/[0-9.]+/.test(fpUA) || /Edg\\/[0-9.]+/.test(fpUA);
+
+    // If we are running in Chromium but the profile UA is not Chromium-based (e.g. Firefox/Safari),
+    // fall back to the real UA/platform to avoid blatant contradictions.
+    if (realIsChromium && !fpIsChromium) {
+      fp.userAgent = realUA;
+      fp.platform = navigator.platform || fp.platform;
+    }
+
+    const realChrome = realUA.match(/Chrome\\/([0-9.]+)/);
+    const realEdg = realUA.match(/Edg\\/([0-9.]+)/);
+    if (realChrome && fp.userAgent && fp.userAgent.includes('Chrome/')) {
+      fp.userAgent = fp.userAgent.replace(/Chrome\\/[0-9.]+/g, 'Chrome/' + realChrome[1]);
+    }
+    if (realEdg && fp.userAgent && fp.userAgent.includes('Edg/')) {
+      fp.userAgent = fp.userAgent.replace(/Edg\\/[0-9.]+/g, 'Edg/' + realEdg[1]);
+    }
+  } catch(e) {}
+
   // --- Function.toString masking ---
-  // Detection scripts call .toString() on navigator getters to check if they're native.
-  const maskedFns = new WeakSet();
+  // WeakMap stores custom display name for each masked function.
+  // Detection scripts call .toString() on getters to check if they're native.
+  const maskedFns = new WeakMap();
 
   const origToString = Function.prototype.toString;
   Function.prototype.toString = function() {
     if (maskedFns.has(this)) {
-      return 'function ' + (this.name || '') + '() { [native code] }';
+      return 'function ' + maskedFns.get(this) + '() { [native code] }';
     }
     return origToString.call(this);
   };
-  maskedFns.add(Function.prototype.toString);
+  maskedFns.set(Function.prototype.toString, 'toString');
+
+  // Helper: define a property on a prototype with a properly masked native-looking getter.
+  // In real Chrome, Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent').get.toString()
+  // returns "function get userAgent() { [native code] }" — we replicate this exactly.
+  function defineGetterProp(proto, prop, value, enumerable) {
+    if (enumerable === undefined) enumerable = true;
+    var getter = function() { return value; };
+    Object.defineProperty(getter, 'name', { value: 'get ' + prop, configurable: true });
+    Object.defineProperty(getter, 'length', { value: 0, configurable: true });
+    maskedFns.set(getter, 'get ' + prop);
+    try {
+      Object.defineProperty(proto, prop, {
+        get: getter,
+        set: undefined,
+        enumerable: enumerable,
+        configurable: true,
+      });
+    } catch(e) {}
+  }
+
+  // Helper: mask a prototype method override so .toString() returns native code
+  function maskProtoMethod(proto, name, fn) {
+    Object.defineProperty(fn, 'name', { value: name, configurable: true });
+    maskedFns.set(fn, name);
+    proto[name] = fn;
+  }
 
   // --- Browser type detection ---
   const isChrome = fp.userAgent.includes('Chrome');
   const isSafari = fp.userAgent.includes('Safari') && !fp.userAgent.includes('Chrome');
   const isFirefox = fp.userAgent.includes('Firefox');
 
-  // --- Navigator overrides ---
+  // --- Navigator overrides (all getters properly masked) ---
   const vendorValue = isChrome ? 'Google Inc.' : isSafari ? 'Apple Computer, Inc.' : '';
 
-  const navProps = {
-    userAgent: fp.userAgent,
-    platform: fp.platform,
-    hardwareConcurrency: fp.hardwareConcurrency,
-    language: fp.language,
-    languages: [fp.language, fp.language.split('-')[0]],
-    doNotTrack: fp.doNotTrack,
-    maxTouchPoints: 0,
-    vendor: vendorValue,
-  };
+  defineGetterProp(Navigator.prototype, 'userAgent', fp.userAgent);
+  defineGetterProp(Navigator.prototype, 'appVersion', (fp.userAgent || '').replace(/^Mozilla\\//, ''));
+  defineGetterProp(Navigator.prototype, 'platform', fp.platform);
+  defineGetterProp(Navigator.prototype, 'hardwareConcurrency', fp.hardwareConcurrency);
+  defineGetterProp(Navigator.prototype, 'language', fp.language);
+  defineGetterProp(Navigator.prototype, 'languages', Object.freeze([fp.language, fp.language.split('-')[0]]));
+  if (fp.doNotTrack !== undefined && fp.doNotTrack !== null) {
+    defineGetterProp(Navigator.prototype, 'doNotTrack', fp.doNotTrack);
+  }
+  defineGetterProp(Navigator.prototype, 'maxTouchPoints', 0);
+  defineGetterProp(Navigator.prototype, 'vendor', vendorValue);
+  defineGetterProp(Navigator.prototype, 'productSub', '20030107');
+  defineGetterProp(Navigator.prototype, 'vendorSub', '');
 
   // Chrome-only properties
   if (isChrome) {
-    navProps.deviceMemory = fp.deviceMemory;
-    navProps.pdfViewerEnabled = true;
+    defineGetterProp(Navigator.prototype, 'deviceMemory', fp.deviceMemory);
+    defineGetterProp(Navigator.prototype, 'pdfViewerEnabled', true);
   }
 
   // Safari/Firefox should NOT have deviceMemory or pdfViewerEnabled
   if (isSafari || isFirefox) {
-    try {
-      Object.defineProperty(Navigator.prototype, 'deviceMemory', {
-        get: () => undefined,
-        configurable: true,
-      });
-    } catch(e) {}
+    defineGetterProp(Navigator.prototype, 'deviceMemory', undefined);
   }
 
-  for (const [key, value] of Object.entries(navProps)) {
-    if (value === undefined) continue;
-    try {
-      Object.defineProperty(Navigator.prototype, key, {
-        get: () => value,
-        configurable: true,
-      });
-    } catch(e) {}
-  }
-
-  // --- navigator.webdriver = false ---
-  try {
-    Object.defineProperty(Navigator.prototype, 'webdriver', {
-      get: () => false,
-      configurable: true,
-    });
-  } catch(e) {}
+  // --- navigator.webdriver = false (masked) ---
+  // In real Chrome the getter name is "get webdriver"
+  defineGetterProp(Navigator.prototype, 'webdriver', false);
 
   // --- navigator.connection (Network Information API) ---
   // Chrome-only API — Safari/Firefox don't have it
@@ -92,11 +128,7 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
         removeEventListener: function() {},
       };
       if (!navigator.connection) {
-        Object.defineProperty(Navigator.prototype, 'connection', {
-          get: () => connectionProto,
-          configurable: true,
-          enumerable: true,
-        });
+        defineGetterProp(Navigator.prototype, 'connection', connectionProto);
       }
     } catch(e) {}
   }
@@ -191,40 +223,40 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
     } catch(e) {}
   }
 
-  // --- Screen overrides ---
+  // --- Screen overrides (masked getters) ---
   try {
     const screenW = (fp.screenResolution && fp.screenResolution.width) || 1920;
     const screenH = (fp.screenResolution && fp.screenResolution.height) || 1080;
-    Object.defineProperty(Screen.prototype, 'width', { get: () => screenW, configurable: true });
-    Object.defineProperty(Screen.prototype, 'height', { get: () => screenH, configurable: true });
-    Object.defineProperty(Screen.prototype, 'availWidth', { get: () => screenW, configurable: true });
-    Object.defineProperty(Screen.prototype, 'availHeight', { get: () => screenH - 40, configurable: true });
-    Object.defineProperty(Screen.prototype, 'colorDepth', { get: () => 24, configurable: true });
-    Object.defineProperty(Screen.prototype, 'pixelDepth', { get: () => 24, configurable: true });
+    defineGetterProp(Screen.prototype, 'width', screenW);
+    defineGetterProp(Screen.prototype, 'height', screenH);
+    defineGetterProp(Screen.prototype, 'availWidth', screenW);
+    defineGetterProp(Screen.prototype, 'availHeight', screenH - 40);
+    defineGetterProp(Screen.prototype, 'colorDepth', 24);
+    defineGetterProp(Screen.prototype, 'pixelDepth', 24);
 
-    Object.defineProperty(window, 'outerWidth', { get: () => screenW, configurable: true });
-    Object.defineProperty(window, 'outerHeight', { get: () => screenH, configurable: true });
+    defineGetterProp(window, 'outerWidth', screenW);
+    defineGetterProp(window, 'outerHeight', screenH);
   } catch(e) {}
 
-  // --- WebGL overrides ---
+  // --- WebGL overrides (masked) ---
   const getParameterOrig = WebGLRenderingContext.prototype.getParameter;
-  WebGLRenderingContext.prototype.getParameter = function(param) {
-    const UNMASKED_VENDOR = 0x9245;
-    const UNMASKED_RENDERER = 0x9246;
+  maskProtoMethod(WebGLRenderingContext.prototype, 'getParameter', function(param) {
+    var UNMASKED_VENDOR = 0x9245;
+    var UNMASKED_RENDERER = 0x9246;
     if (param === UNMASKED_VENDOR) return fp.webglVendor;
     if (param === UNMASKED_RENDERER) return fp.webglRenderer;
     return getParameterOrig.call(this, param);
-  };
+  });
 
   if (typeof WebGL2RenderingContext !== 'undefined') {
     const getParameter2Orig = WebGL2RenderingContext.prototype.getParameter;
-    WebGL2RenderingContext.prototype.getParameter = function(param) {
-      const UNMASKED_VENDOR = 0x9245;
-      const UNMASKED_RENDERER = 0x9246;
+    maskProtoMethod(WebGL2RenderingContext.prototype, 'getParameter', function(param) {
+      var UNMASKED_VENDOR = 0x9245;
+      var UNMASKED_RENDERER = 0x9246;
       if (param === UNMASKED_VENDOR) return fp.webglVendor;
       if (param === UNMASKED_RENDERER) return fp.webglRenderer;
       return getParameter2Orig.call(this, param);
-    };
+    });
   }
 
   // --- Canvas fingerprint noise ---
@@ -236,7 +268,6 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
       const imageData = origGetImageData.call(ctx, 0, 0, canvas.width, canvas.height);
       const data = imageData.data;
       for (let i = 0; i < data.length; i += 4) {
-        // Skip fully transparent pixels — modifying them is detectable
         if (data[i+3] === 0) continue;
         data[i] = data[i] + Math.floor((Math.random() - 0.5) * fp.canvasNoise * 255);
         data[i+1] = data[i+1] + Math.floor((Math.random() - 0.5) * fp.canvasNoise * 255);
@@ -247,26 +278,25 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
   }
 
   const toDataURLOrig = HTMLCanvasElement.prototype.toDataURL;
-  HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+  maskProtoMethod(HTMLCanvasElement.prototype, 'toDataURL', function(type, quality) {
     if (this.width === 0 || this.height === 0) return toDataURLOrig.call(this, type, quality);
     addCanvasNoise(this.getContext('2d'), this);
     return toDataURLOrig.call(this, type, quality);
-  };
+  });
 
   const toBlobOrig = HTMLCanvasElement.prototype.toBlob;
-  HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {
+  maskProtoMethod(HTMLCanvasElement.prototype, 'toBlob', function(callback, type, quality) {
     if (this.width === 0 || this.height === 0) return toBlobOrig.call(this, callback, type, quality);
     addCanvasNoise(this.getContext('2d'), this);
     return toBlobOrig.call(this, callback, type, quality);
-  };
+  });
 
-  // --- Canvas getImageData noise (direct reads) ---
-  CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {
+  // --- Canvas getImageData noise (direct reads, masked) ---
+  maskProtoMethod(CanvasRenderingContext2D.prototype, 'getImageData', function(sx, sy, sw, sh) {
     const imageData = origGetImageData.call(this, sx, sy, sw, sh);
     if (fp.canvasNoise > 0) {
       const data = imageData.data;
       for (let i = 0; i < data.length; i += 4) {
-        // Skip fully transparent pixels
         if (data[i+3] === 0) continue;
         data[i] = data[i] + Math.floor((Math.random() - 0.5) * fp.canvasNoise * 255);
         data[i+1] = data[i+1] + Math.floor((Math.random() - 0.5) * fp.canvasNoise * 255);
@@ -274,16 +304,14 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
       }
     }
     return imageData;
-  };
+  });
 
-  // --- AudioContext fingerprint noise ---
+  // --- AudioContext fingerprint noise (masked) ---
   if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
     const Ctx = typeof AudioContext !== 'undefined' ? AudioContext : webkitAudioContext;
-    const createOscillatorOrig = Ctx.prototype.createOscillator;
-    const createDynamicsCompressorOrig = Ctx.prototype.createDynamicsCompressor;
     const getChannelDataOrig = AudioBuffer.prototype.getChannelData;
 
-    AudioBuffer.prototype.getChannelData = function(channel) {
+    maskProtoMethod(AudioBuffer.prototype, 'getChannelData', function(channel) {
       const data = getChannelDataOrig.call(this, channel);
       if (fp.audioNoise > 0) {
         for (let i = 0; i < data.length; i++) {
@@ -291,7 +319,7 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
         }
       }
       return data;
-    };
+    });
   }
 
   // --- WebRTC ---
@@ -300,21 +328,22 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
     Object.defineProperty(window, 'webkitRTCPeerConnection', { value: undefined, writable: false });
     Object.defineProperty(window, 'mozRTCPeerConnection', { value: undefined, writable: false });
     if (navigator.mediaDevices) {
-      navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('Not allowed'));
-      navigator.mediaDevices.enumerateDevices = () => Promise.resolve([]);
+      navigator.mediaDevices.getUserMedia = function() { return Promise.reject(new Error('Not allowed')); };
+      navigator.mediaDevices.enumerateDevices = function() { return Promise.resolve([]); };
+      maskedFns.set(navigator.mediaDevices.getUserMedia, 'getUserMedia');
+      maskedFns.set(navigator.mediaDevices.enumerateDevices, 'enumerateDevices');
     }
   }
 
-  // --- Timezone ---
-  const DateOrig = Date;
+  // --- Timezone (masked) ---
   const resolvedOptionsOrig = Intl.DateTimeFormat.prototype.resolvedOptions;
-  Intl.DateTimeFormat.prototype.resolvedOptions = function() {
+  maskProtoMethod(Intl.DateTimeFormat.prototype, 'resolvedOptions', function() {
     const result = resolvedOptionsOrig.call(this);
     result.timeZone = fp.timezone;
     return result;
-  };
+  });
 
-  // Override Date.prototype.getTimezoneOffset
+  // Override Date.prototype.getTimezoneOffset (masked)
   const tzOffsets = {
     'America/New_York': 300, 'America/Chicago': 360, 'America/Denver': 420,
     'America/Los_Angeles': 480, 'Europe/London': 0, 'Europe/Paris': -60,
@@ -322,14 +351,14 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
     'Asia/Shanghai': -480, 'Asia/Kolkata': -330, 'Asia/Dubai': -240,
     'Australia/Sydney': -660, 'Pacific/Auckland': -780,
     'America/Sao_Paulo': 180, 'America/Toronto': 300,
+    'Asia/Almaty': -360,
   };
   const offset = tzOffsets[fp.timezone] ?? 0;
-  Date.prototype.getTimezoneOffset = function() { return offset; };
+  maskProtoMethod(Date.prototype, 'getTimezoneOffset', function() { return offset; });
 
-  // --- Plugins ---
-  // Use proper PluginArray prototype so instanceof checks pass
-  Object.defineProperty(Navigator.prototype, 'plugins', {
-    get: () => {
+  // --- Plugins (masked getter) ---
+  (function() {
+    const pluginsGetter = function() {
       const pluginDefs = isChrome ? [
         { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
         { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
@@ -339,22 +368,21 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
       ] : [];
 
       const pluginArray = Object.create(PluginArray.prototype);
-      const items = pluginDefs.map((p, i) => {
+      const items = pluginDefs.map(function(p, i) {
         const obj = Object.create(Plugin.prototype);
-        Object.defineProperty(obj, 'name', { get: () => p.name, enumerable: true });
-        Object.defineProperty(obj, 'filename', { get: () => p.filename, enumerable: true });
-        Object.defineProperty(obj, 'description', { get: () => p.description, enumerable: true });
-        Object.defineProperty(obj, 'length', { get: () => 1 });
+        Object.defineProperty(obj, 'name', { get: function() { return p.name; }, enumerable: true });
+        Object.defineProperty(obj, 'filename', { get: function() { return p.filename; }, enumerable: true });
+        Object.defineProperty(obj, 'description', { get: function() { return p.description; }, enumerable: true });
+        Object.defineProperty(obj, 'length', { get: function() { return 1; } });
         Object.defineProperty(pluginArray, i, { value: obj, enumerable: true });
         return obj;
       });
 
       Object.defineProperty(pluginArray, 'length', { value: items.length, enumerable: true });
       pluginArray.item = function(i) { return items[i] || null; };
-      pluginArray.namedItem = function(name) { return items.find(p => p.name === name) || null; };
+      pluginArray.namedItem = function(name) { return items.find(function(p) { return p.name === name; }) || null; };
       pluginArray.refresh = function() {};
 
-      // Make it iterable
       pluginArray[Symbol.iterator] = function() {
         let idx = 0;
         return {
@@ -365,35 +393,35 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
       };
 
       return pluginArray;
-    },
-    configurable: true,
-  });
+    };
+    Object.defineProperty(pluginsGetter, 'name', { value: 'get plugins', configurable: true });
+    maskedFns.set(pluginsGetter, 'get plugins');
+    try {
+      Object.defineProperty(Navigator.prototype, 'plugins', {
+        get: pluginsGetter,
+        set: undefined,
+        enumerable: true,
+        configurable: true,
+      });
+    } catch(e) {}
+  })();
 
-  // --- Fonts detection defense ---
+  // --- Fonts detection defense (masked) ---
   const measureTextOrig = CanvasRenderingContext2D.prototype.measureText;
-  CanvasRenderingContext2D.prototype.measureText = function(text) {
+  maskProtoMethod(CanvasRenderingContext2D.prototype, 'measureText', function(text) {
     const result = measureTextOrig.call(this, text);
     const noise = (Math.random() - 0.5) * 0.01;
     const origWidth = result.width;
-    Object.defineProperty(result, 'width', { get: () => origWidth + noise });
+    Object.defineProperty(result, 'width', { get: function() { return origWidth + noise; } });
     return result;
-  };
+  });
 
   // --- Battery API ---
-  if (navigator.getBattery) {
-    navigator.getBattery = () => Promise.resolve({
-      charging: true,
-      chargingTime: 0,
-      dischargingTime: Infinity,
-      level: 1.0,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    });
-  }
+  // Do NOT spoof getBattery: a fake function is easy to detect and often breaks heuristics.
 
-  // --- Permissions API ---
+  // --- Permissions API (masked) ---
   const queryOrig = Permissions.prototype.query;
-  Permissions.prototype.query = function(desc) {
+  maskProtoMethod(Permissions.prototype, 'query', function(desc) {
     const permStates = {
       notifications: 'prompt',
       geolocation: 'prompt',
@@ -419,7 +447,27 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
       });
     }
     return queryOrig.call(this, desc);
-  };
+  });
+
+  // --- Clean up automation / CDP markers ---
+  try {
+    var keysToRemove = Object.getOwnPropertyNames(window).filter(function(k) {
+      return /^cdc_/.test(k) || /^__selenium/.test(k) || /^__driver/.test(k) ||
+             /^callSelenium/.test(k) || /^_Selenium/.test(k) || /^calledSelenium/.test(k) ||
+             /^_phantom/.test(k) || /^__nightmare/.test(k) || /^domAutomation/.test(k) ||
+             /^domAutomationController/.test(k);
+    });
+    for (var ki = 0; ki < keysToRemove.length; ki++) {
+      try { delete window[keysToRemove[ki]]; } catch(e) {}
+    }
+  } catch(e) {}
+
+  // Remove document.querySelector automation markers
+  try {
+    if (document.querySelector && document.querySelector('[selenium]')) {
+      // silently ignore
+    }
+  } catch(e) {}
 
 })();
 `;
