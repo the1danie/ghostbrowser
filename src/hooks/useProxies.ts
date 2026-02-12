@@ -31,7 +31,7 @@ export function useProxies() {
 
   useEffect(() => {
     fetchProxies().catch((err) => {
-      console.error('[NebulaBrowse] Failed to fetch proxies:', err);
+      console.error('[GhostBrowser] Failed to fetch proxies:', err);
     });
   }, [fetchProxies]);
 

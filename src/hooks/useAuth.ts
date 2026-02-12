@@ -36,13 +36,46 @@ export function useAuth() {
     return data;
   };
 
-  const signInWithOAuth = async (provider: OAuthProvider) => {
-    const redirectTo = `${window.location.origin}/login`;
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo },
+  const isElectronProduction =
+    typeof window.electronAPI !== 'undefined' &&
+    !window.location.origin.includes('localhost');
+
+  // In production Electron builds, listen for deep-link OAuth callback
+  useEffect(() => {
+    if (!isElectronProduction) return;
+    const unsubscribe = window.electronAPI.onAuthCallback(async (tokens) => {
+      const { error } = await supabase.auth.setSession({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+      });
+      if (error) console.error('Failed to set session from deep link:', error);
     });
-    if (error) throw error;
+    return unsubscribe;
+  }, [isElectronProduction]);
+
+  const signInWithOAuth = async (provider: OAuthProvider) => {
+    if (isElectronProduction) {
+      // Production Electron: open system browser, redirect back via deep link
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: 'ghostbrowser://auth/callback',
+          skipBrowserRedirect: true,
+        },
+      });
+      if (error) throw error;
+      if (data?.url) {
+        window.electronAPI.openExternal(data.url);
+      }
+    } else {
+      // Dev mode or web: standard in-window redirect
+      const redirectTo = `${window.location.origin}/login`;
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo },
+      });
+      if (error) throw error;
+    }
   };
 
   const signOut = async () => {

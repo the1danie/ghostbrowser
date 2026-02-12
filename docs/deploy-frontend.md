@@ -56,16 +56,16 @@ npm run build
 ### Вариант C: Свой сервер (nginx)
 
 1. Соберите проект локально: `npm run build`.
-2. Скопируйте содержимое папки `dist/` на сервер (например, в `/var/www/nebulabrowse`):
+2. Скопируйте содержимое папки `dist/` на сервер (например, в `/var/www/ghostbrowser`):
 
    ```bash
-   scp -r dist/* user@server:/var/www/nebulabrowse/
+   scp -r dist/* user@server:/var/www/ghostbrowser/
    ```
 
    Или через rsync:
 
    ```bash
-   rsync -avz dist/ user@server:/var/www/nebulabrowse/
+   rsync -avz dist/ user@server:/var/www/ghostbrowser/
    ```
 
 3. Пример конфига nginx для SPA (все маршруты отдаём `index.html`):
@@ -74,7 +74,7 @@ npm run build
    server {
        listen 80;
        server_name your-domain.com;
-       root /var/www/nebulabrowse;
+       root /var/www/ghostbrowser;
        index index.html;
 
        location / {

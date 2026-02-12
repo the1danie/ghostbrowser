@@ -1,4 +1,4 @@
-# NebulaBrowse — Fingerprint Engine
+# GhostBrowser — Fingerprint Engine
 
 ## Обзор
 

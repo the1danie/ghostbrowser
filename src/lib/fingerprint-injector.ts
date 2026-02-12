@@ -200,7 +200,7 @@ export function generateInjectionScript(fp: BrowserFingerprint): string {
     return queryOrig.call(this, desc);
   };
 
-  console.log('[NebulaBrowse] Fingerprint injected successfully');
+  console.log('[GhostBrowser] Fingerprint injected successfully');
 })();
 `;
 }

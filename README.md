@@ -1,6 +1,6 @@
-# NebulaBrowse
+# GhostBrowser
 
-NebulaBrowse — open-source antidetect browser на `Electron + React + Supabase + Playwright`.
+GhostBrowser — open-source antidetect browser на `Electron + React + Supabase + Playwright`.
 
 Проект позволяет:
 - управлять множеством браузерных профилей;

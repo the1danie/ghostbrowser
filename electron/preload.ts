@@ -30,4 +30,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteProfileData: (profileId: string) => ipcRenderer.invoke('browser:delete-profile-data', profileId),
   cleanupOrphanProfileData: (keepProfileIds: string[]) => ipcRenderer.invoke('browser:cleanup-orphan-profile-data', keepProfileIds),
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+
+  // OAuth deep-link callback
+  onAuthCallback: (callback: (tokens: { access_token: string; refresh_token: string }) => void) => {
+    const handler = (_event: any, tokens: any) => callback(tokens);
+    ipcRenderer.on('auth:callback', handler);
+    return () => ipcRenderer.removeListener('auth:callback', handler);
+  },
 });

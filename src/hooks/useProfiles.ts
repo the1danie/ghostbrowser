@@ -23,7 +23,7 @@ export function useProfiles() {
 
   useEffect(() => {
     fetchProfiles().catch((err) => {
-      console.error('[NebulaBrowse] Failed to fetch profiles:', err);
+      console.error('[GhostBrowser] Failed to fetch profiles:', err);
     });
   }, [fetchProfiles]);
 
@@ -34,10 +34,10 @@ export function useProfiles() {
     try {
       const result = await api.deleteProfileData(profileId);
       if (!result?.success) {
-        console.warn(`[NebulaBrowse] Failed to remove local profile data for ${profileId}:`, result?.error);
+        console.warn(`[GhostBrowser] Failed to remove local profile data for ${profileId}:`, result?.error);
       }
     } catch (err) {
-      console.warn(`[NebulaBrowse] Failed to remove local profile data for ${profileId}:`, err);
+      console.warn(`[GhostBrowser] Failed to remove local profile data for ${profileId}:`, err);
     }
   };
 

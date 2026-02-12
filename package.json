@@ -1,5 +1,5 @@
 {
-  "name": "nebulabrowse",
+  "name": "ghostbrowser",
   "version": "1.0.0",
   "description": "Open-source antidetect browser — Dolphin Anty alternative",
   "main": "dist-electron/main.js",
@@ -41,11 +41,15 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.nebulabrowse.app",
-    "productName": "NebulaBrowse",
+    "appId": "com.ghostbrowser.app",
+    "productName": "GhostBrowser",
     "directories": {
       "output": "release",
       "buildResources": "build"
+    },
+    "protocols": {
+      "name": "GhostBrowser Auth",
+      "schemes": ["ghostbrowser"]
     },
     "files": [
       "dist/**/*",

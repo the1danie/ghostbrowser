@@ -115,14 +115,14 @@ export class BrowserManager {
 
     let effectiveProxy = data.proxy;
     if (data.proxy) {
-      console.log('[NebulaBrowse] Verifying proxy before launch...');
+      console.log('[GhostBrowser] Verifying proxy before launch...');
       const probe = await withTimeout(this.checkProxy(data.proxy, { includeGeo: false }), 30000);
       if (!probe.isValid) {
         throw new Error(`Proxy check failed (${data.proxy.host}:${data.proxy.port}): ${probe.error || 'Proxy is not reachable'}`);
       }
       if (probe.usedProtocol && probe.usedProtocol !== data.proxy.protocol) {
         effectiveProxy = { ...data.proxy, protocol: probe.usedProtocol };
-        console.log(`[NebulaBrowse] Proxy protocol adjusted: ${data.proxy.protocol} -> ${probe.usedProtocol}`);
+        console.log(`[GhostBrowser] Proxy protocol adjusted: ${data.proxy.protocol} -> ${probe.usedProtocol}`);
       }
     }
 
@@ -143,20 +143,20 @@ export class BrowserManager {
       };
       // Весь трафик через прокси, без обхода (как в обычном браузере)
       launchArgs.push('--proxy-bypass-list=<-loopback>');
-      console.log('[NebulaBrowse] Proxy config:', { server: launchOptions.proxy.server, hasAuth: !!(effectiveProxy.username && effectiveProxy.password) });
+      console.log('[GhostBrowser] Proxy config:', { server: launchOptions.proxy.server, hasAuth: !!(effectiveProxy.username && effectiveProxy.password) });
     } else {
-      console.log('[NebulaBrowse] No proxy configured');
+      console.log('[GhostBrowser] No proxy configured');
     }
 
-    console.log('[NebulaBrowse] Launching persistent profile...');
+    console.log('[GhostBrowser] Launching persistent profile...');
     const context = await withTimeout(chromium.launchPersistentContext(userDataDir, launchOptions), 25000);
     const browser = context.browser();
-    console.log('[NebulaBrowse] Persistent context created OK');
+    console.log('[GhostBrowser] Persistent context created OK');
 
     // Inject fingerprint script before any page loads
     const injectionScript = generateInjectionScript(data.fingerprint);
     await context.addInitScript(injectionScript);
-    console.log('[NebulaBrowse] Fingerprint injected');
+    console.log('[GhostBrowser] Fingerprint injected');
 
     // Debug: track request timing to see why loads are slow or hanging
     type ReqData = { start: number; timeout: NodeJS.Timeout };
@@ -167,12 +167,12 @@ export class BrowserManager {
       const method = request.method();
       const shortUrl = url.length > 90 ? url.substring(0, 90) + '…' : url;
       const now = Date.now();
-      console.log(`[NebulaBrowse] → Request START: ${method} ${shortUrl}`);
+      console.log(`[GhostBrowser] → Request START: ${method} ${shortUrl}`);
 
       const t = setTimeout(() => {
         if (requestData.has(request)) {
           const elapsed = Math.round((Date.now() - now) / 1000);
-          console.log(`[NebulaBrowse] ⏳ Request PENDING ${elapsed}s (no response): ${method} ${shortUrl}`);
+          console.log(`[GhostBrowser] ⏳ Request PENDING ${elapsed}s (no response): ${method} ${shortUrl}`);
         }
       }, 5000);
       requestData.set(request, { start: now, timeout: t });
@@ -189,7 +189,7 @@ export class BrowserManager {
       const method = request.method();
       const shortUrl = url.length > 70 ? url.substring(0, 70) + '…' : url;
       const slow = durationMs > 3000 ? ' (SLOW!)' : '';
-      console.log(`[NebulaBrowse] ← Response ${response.status()}: ${method} ${shortUrl} — ${durationMs}ms${slow}`);
+      console.log(`[GhostBrowser] ← Response ${response.status()}: ${method} ${shortUrl} — ${durationMs}ms${slow}`);
     });
 
     context.on('requestfailed', (request) => {
@@ -201,7 +201,7 @@ export class BrowserManager {
       const durationMs = data ? Date.now() - data.start : 0;
       const err = request.failure()?.errorText || 'unknown';
       const shortUrl = request.url().substring(0, 100);
-      console.log(`[NebulaBrowse] ✗ Request FAILED (after ${durationMs}ms): ${request.method()} ${shortUrl} — ${err}`);
+      console.log(`[GhostBrowser] ✗ Request FAILED (after ${durationMs}ms): ${request.method()} ${shortUrl} — ${err}`);
     });
 
     // Inject cookies if provided
@@ -330,7 +330,7 @@ export class BrowserManager {
 
     if (!shouldUseRunningInstance) {
       if (instance && requestedProxyServer && instance.proxyServer !== requestedProxyServer) {
-        console.log('[NebulaBrowse] Running profile proxy differs from cookie warmer proxy. Launching dedicated warmer browser.');
+        console.log('[GhostBrowser] Running profile proxy differs from cookie warmer proxy. Launching dedicated warmer browser.');
       }
 
       const launchArgs: string[] = [
@@ -346,14 +346,14 @@ export class BrowserManager {
 
       let effectiveProxy = config.proxy;
       if (config.proxy) {
-        console.log('[NebulaBrowse] Verifying proxy for cookie warming...');
+        console.log('[GhostBrowser] Verifying proxy for cookie warming...');
         const probe = await withTimeout(this.checkProxy(config.proxy, { includeGeo: false }), 30000);
         if (!probe.isValid) {
           throw new Error(`Cookie warmer proxy check failed (${config.proxy.host}:${config.proxy.port}): ${probe.error || 'Proxy is not reachable'}`);
         }
         if (probe.usedProtocol && probe.usedProtocol !== config.proxy.protocol) {
           effectiveProxy = { ...config.proxy, protocol: probe.usedProtocol };
-          console.log(`[NebulaBrowse] Cookie warmer proxy protocol adjusted: ${config.proxy.protocol} -> ${probe.usedProtocol}`);
+          console.log(`[GhostBrowser] Cookie warmer proxy protocol adjusted: ${config.proxy.protocol} -> ${probe.usedProtocol}`);
         }
       }
 
@@ -364,12 +364,12 @@ export class BrowserManager {
           username: effectiveProxy.username || undefined,
           password: effectiveProxy.password || undefined,
         };
-        console.log('[NebulaBrowse] Cookie warmer proxy config:', {
+        console.log('[GhostBrowser] Cookie warmer proxy config:', {
           server: launchOptions.proxy.server,
           hasAuth: !!(effectiveProxy.username && effectiveProxy.password),
         });
       } else {
-        console.log('[NebulaBrowse] Cookie warmer without proxy');
+        console.log('[GhostBrowser] Cookie warmer without proxy');
       }
 
       // Launch a headless browser for warming with anti-detection args
@@ -387,7 +387,7 @@ export class BrowserManager {
         startedAt: Date.now(),
       };
     } else {
-      console.log('[NebulaBrowse] Cookie warmer using running profile context');
+      console.log('[GhostBrowser] Cookie warmer using running profile context');
     }
 
     const { context } = instance;

@@ -1,9 +1,9 @@
-# NebulaBrowse — Структура проекта
+# GhostBrowser — Структура проекта
 
 ## Дерево файлов
 
 ```
-nebulabrowse/
+ghostbrowser/
 ├── package.json                 # Зависимости и скрипты
 ├── tsconfig.json                # TypeScript config (React/renderer)
 ├── tsconfig.node.json           # TypeScript config (Vite + Electron)

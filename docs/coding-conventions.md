@@ -1,4 +1,4 @@
-# NebulaBrowse — Coding Conventions
+# GhostBrowser — Coding Conventions
 
 ## Общие принципы
 

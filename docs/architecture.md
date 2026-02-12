@@ -1,8 +1,8 @@
-# NebulaBrowse — Архитектура
+# GhostBrowser — Архитектура
 
 ## Обзор
 
-NebulaBrowse — open-source antidetect browser (аналог Dolphin Anty).
+GhostBrowser — open-source antidetect browser (аналог Dolphin Anty).
 Стек: **Electron + React + TypeScript + Tailwind CSS + Supabase + Playwright**.
 
 ## Слои приложения

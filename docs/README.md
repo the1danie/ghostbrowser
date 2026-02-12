@@ -1,4 +1,4 @@
-# NebulaBrowse Docs Index
+# GhostBrowser Docs Index
 
 Это карта документации проекта.
 

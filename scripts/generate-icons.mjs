@@ -25,16 +25,12 @@ function sdfRoundedRect(px, py, cx, cy, halfW, halfH, radius) {
   return outside + inside - radius;
 }
 
-function sdfSegment(px, py, ax, ay, bx, by) {
-  const vx = bx - ax;
-  const vy = by - ay;
-  const wx = px - ax;
-  const wy = py - ay;
-  const lengthSq = vx * vx + vy * vy;
-  const t = lengthSq === 0 ? 0 : clamp((wx * vx + wy * vy) / lengthSq);
-  const nx = ax + vx * t;
-  const ny = ay + vy * t;
-  return Math.hypot(px - nx, py - ny);
+function sdfCircle(px, py, cx, cy, r) {
+  return Math.hypot(px - cx, py - cy) - r;
+}
+
+function sdfEllipse(px, py, cx, cy, rx, ry) {
+  return Math.hypot((px - cx) / rx, (py - cy) / ry) - 1;
 }
 
 function blendPixel(x, y, r, g, b, a) {
@@ -56,11 +52,7 @@ function blendPixel(x, y, r, g, b, a) {
   pixels[idx + 3] = Math.round(clamp(outA * 255, 0, 255));
 }
 
-function strokeMask(distance, radius, feather = 1.4) {
-  return 1 - smoothstep(0, feather, distance - radius);
-}
-
-function generateNebulaIcon() {
+function generateGhostIcon() {
   const cx = SIZE / 2;
   const cy = SIZE / 2;
 
@@ -73,67 +65,74 @@ function generateNebulaIcon() {
       if (boxMask <= 0) continue;
 
       const verticalMix = y / (SIZE - 1);
-      const nx = (px - SIZE * 0.35) / (SIZE * 0.7);
-      const ny = (py - SIZE * 0.28) / (SIZE * 0.7);
+      const nx = (px - SIZE * 0.34) / (SIZE * 0.7);
+      const ny = (py - SIZE * 0.26) / (SIZE * 0.7);
       const highlight = clamp(1 - Math.hypot(nx, ny));
 
-      const red = lerp(12, 25, verticalMix) + highlight * 14;
-      const green = lerp(16, 14, verticalMix) + highlight * 10;
-      const blue = lerp(39, 82, verticalMix) + highlight * 22;
+      const red = lerp(12, 24, verticalMix) + highlight * 13;
+      const green = lerp(17, 16, verticalMix) + highlight * 10;
+      const blue = lerp(44, 89, verticalMix) + highlight * 24;
 
       blendPixel(x, y, red, green, blue, 255 * boxMask);
 
       const edgeMask = 1 - smoothstep(0, 4, Math.abs(boxDistance));
       if (edgeMask > 0) {
-        blendPixel(x, y, 95, 84, 255, 95 * edgeMask);
+        blendPixel(x, y, 102, 92, 255, 100 * edgeMask);
       }
     }
   }
 
-  const leftX = 355;
-  const leftTop = 330;
-  const leftBottom = 700;
-  const rightX = 670;
+  const head = { cx, cy: 390, r: 190 };
+  const torso = { cx, cy: 560, hw: 188, hh: 165, r: 92 };
+  const feet = [
+    { cx: 382, cy: 736, r: 82 },
+    { cx: 512, cy: 748, r: 86 },
+    { cx: 642, cy: 736, r: 82 },
+  ];
 
   for (let y = 0; y < SIZE; y += 1) {
     for (let x = 0; x < SIZE; x += 1) {
       const px = x + 0.5;
       const py = y + 0.5;
-      const distanceFromCenter = Math.hypot(px - cx, py - cy);
 
-      const orbitMask = strokeMask(Math.abs(distanceFromCenter - 292), 15, 1.7);
-      if (orbitMask > 0) {
-        blendPixel(x, y, 93, 109, 255, 185 * orbitMask);
+      let ghostDistance = sdfCircle(px, py, head.cx, head.cy, head.r);
+      ghostDistance = Math.min(ghostDistance, sdfRoundedRect(px, py, torso.cx, torso.cy, torso.hw, torso.hh, torso.r));
+      for (const foot of feet) {
+        ghostDistance = Math.min(ghostDistance, sdfCircle(px, py, foot.cx, foot.cy, foot.r));
       }
 
-      const glowMask = strokeMask(Math.abs(distanceFromCenter - 292), 28, 1.8);
-      if (glowMask > 0) {
-        blendPixel(x, y, 86, 101, 250, 55 * glowMask);
+      const ghostMask = 1 - smoothstep(0, 1.8, ghostDistance);
+      if (ghostMask > 0) {
+        const tone = clamp((py - 250) / 560);
+        const baseR = lerp(245, 225, tone);
+        const baseG = lerp(249, 234, tone);
+        const baseB = lerp(255, 251, tone);
+        blendPixel(x, y, baseR, baseG, baseB, 255 * ghostMask);
       }
 
-      const coreMask = strokeMask(distanceFromCenter, 18, 1.8);
-      if (coreMask > 0) {
-        blendPixel(x, y, 125, 211, 252, 245 * coreMask);
+      const edgeMask = 1 - smoothstep(0, 3.2, Math.abs(ghostDistance));
+      if (edgeMask > 0) {
+        blendPixel(x, y, 124, 139, 255, 130 * edgeMask);
       }
 
-      const leftDistance = sdfSegment(px, py, leftX, leftBottom, leftX, leftTop);
-      const diagonalDistance = sdfSegment(px, py, leftX, leftTop, rightX, leftBottom);
-      const rightDistance = sdfSegment(px, py, rightX, leftBottom, rightX, leftTop);
+      if (ghostDistance > 0) {
+        const glowMask = 1 - smoothstep(0, 36, ghostDistance);
+        if (glowMask > 0) {
+          blendPixel(x, y, 116, 130, 255, 34 * glowMask);
+        }
+      }
 
-      const leftGlow = strokeMask(leftDistance, 60, 1.6);
-      if (leftGlow > 0) blendPixel(x, y, 229, 231, 235, 36 * leftGlow);
-      const leftCore = strokeMask(leftDistance, 44, 1.6);
-      if (leftCore > 0) blendPixel(x, y, 229, 231, 235, 255 * leftCore);
+      const eyeLeft = 1 - smoothstep(0, 1.4, sdfCircle(px, py, 450, 435, 31));
+      const eyeRight = 1 - smoothstep(0, 1.4, sdfCircle(px, py, 574, 435, 31));
+      if (eyeLeft > 0) blendPixel(x, y, 24, 33, 64, 245 * eyeLeft);
+      if (eyeRight > 0) blendPixel(x, y, 24, 33, 64, 245 * eyeRight);
 
-      const diagonalGlow = strokeMask(diagonalDistance, 60, 1.6);
-      if (diagonalGlow > 0) blendPixel(x, y, 125, 211, 252, 44 * diagonalGlow);
-      const diagonalCore = strokeMask(diagonalDistance, 44, 1.6);
-      if (diagonalCore > 0) blendPixel(x, y, 125, 211, 252, 255 * diagonalCore);
-
-      const rightGlow = strokeMask(rightDistance, 60, 1.6);
-      if (rightGlow > 0) blendPixel(x, y, 229, 231, 235, 36 * rightGlow);
-      const rightCore = strokeMask(rightDistance, 44, 1.6);
-      if (rightCore > 0) blendPixel(x, y, 229, 231, 235, 255 * rightCore);
+      const mouthOuter = 1 - smoothstep(0, 0.045, sdfEllipse(px, py, 512, 548, 72, 96));
+      const mouthInner = 1 - smoothstep(0, 0.05, sdfEllipse(px, py, 512, 534, 48, 68));
+      const mouthMask = clamp(mouthOuter - mouthInner, 0, 1);
+      if (mouthMask > 0) {
+        blendPixel(x, y, 34, 44, 82, 220 * mouthMask);
+      }
     }
   }
 }
@@ -202,7 +201,7 @@ function writePng(filePath) {
   fs.writeFileSync(filePath, pngBuffer);
 }
 
-generateNebulaIcon();
+generateGhostIcon();
 writePng(OUTPUT_PNG);
 
 console.log(`Generated ${OUTPUT_PNG}`);

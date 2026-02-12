@@ -1,4 +1,4 @@
-# NebulaBrowse — База данных (Supabase)
+# GhostBrowser — База данных (Supabase)
 
 ## Схема
 

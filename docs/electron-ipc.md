@@ -1,4 +1,4 @@
-# NebulaBrowse — Electron IPC API
+# GhostBrowser — Electron IPC API
 
 ## Архитектура
 

@@ -2,9 +2,58 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
 import { BrowserManager } from './browser-manager';
 
+const PROTOCOL = 'ghostbrowser';
+
 let mainWindow: BrowserWindow | null = null;
 const browserManager = new BrowserManager();
-const APP_NAME = 'NebulaBrowse';
+const APP_NAME = 'GhostBrowser';
+
+// --- Deep link helpers ---
+
+function parseAuthTokens(url: string): { access_token: string; refresh_token: string } | null {
+  // Tokens arrive in the URL fragment: ghostbrowser://auth/callback#access_token=...&refresh_token=...
+  const hashIndex = url.indexOf('#');
+  if (hashIndex === -1) return null;
+  const params = new URLSearchParams(url.slice(hashIndex + 1));
+  const access_token = params.get('access_token');
+  const refresh_token = params.get('refresh_token');
+  if (!access_token || !refresh_token) return null;
+  return { access_token, refresh_token };
+}
+
+function handleDeepLink(url: string) {
+  if (!url.startsWith(`${PROTOCOL}://auth/callback`)) return;
+  const tokens = parseAuthTokens(url);
+  if (tokens && mainWindow) {
+    mainWindow.webContents.send('auth:callback', tokens);
+    // Bring the app window to front after OAuth
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+}
+
+// --- Single instance lock (Windows / Linux) ---
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    // On Windows/Linux the deep-link URL is passed as the last argument
+    const deepLinkUrl = argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
+    if (deepLinkUrl) handleDeepLink(deepLinkUrl);
+    // Focus the existing window
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+// --- macOS: open-url fires when the app is already running ---
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -44,6 +93,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   app.setName(APP_NAME);
+  app.setAsDefaultProtocolClient(PROTOCOL);
   createWindow();
 
   // When user manually closes a browser window, push event to renderer
