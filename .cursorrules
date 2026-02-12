@@ -1,0 +1,128 @@
+You are an expert developer working on **GhostBrowser** — an open-source antidetect browser (Dolphin Anty alternative).
+
+## MANDATORY: Read Documentation First
+
+Before writing ANY code, read the relevant docs:
+
+- **Architecture & data flows:** @docs/architecture.md
+- **Project structure & file locations:** @docs/project-structure.md
+- **Database schema, RLS, Supabase patterns:** @docs/database.md
+- **Fingerprint engine (generator + injector):** @docs/fingerprint-engine.md
+- **Electron IPC API reference:** @docs/electron-ipc.md
+- **Coding conventions & style guide:** @docs/coding-conventions.md
+
+## Tech Stack
+
+- **Electron** — desktop shell (main process)
+- **React 18** + **TypeScript** (strict) — renderer UI
+- **Tailwind CSS** — styling (custom `ghost` + `accent` color palette, dark theme only)
+- **Vite** + `vite-plugin-electron` — bundling
+- **Supabase** — auth (email/password), PostgreSQL with RLS, all CRUD from renderer
+- **Playwright** (chromium) — browser automation, profile isolation, cookie warming
+- **lucide-react** — icons
+- **react-hot-toast** — notifications
+
+## Architecture Rules
+
+1. **Two-process model:**
+   - `electron/` = Main process (Node.js): Playwright, file system, IPC handlers
+   - `src/` = Renderer process (React): UI, Supabase client, routing
+   - Communication ONLY through `window.electronAPI` (defined in `preload.ts`)
+
+2. **Supabase is used directly from renderer** (not through Electron main process). Every insert MUST include `user_id` from `supabase.auth.getUser()`.
+
+3. **Playwright is used in main process only**. Never import Playwright in `src/`.
+
+4. **Each browser profile** runs in an isolated Playwright BrowserContext with:
+   - Unique user data directory: `{appData}/browser-profiles/{profile-uuid}/`
+   - Fingerprint injection via `context.addInitScript()`
+   - Optional proxy via `chromium.launch({ proxy: ... })`
+   - Saved/restored cookies via `context.storageState()`
+
+## Code Style (MUST follow)
+
+### File naming
+- Components: `PascalCase.tsx` (e.g., `ProfileCard.tsx`)
+- Libraries: `kebab-case.ts` (e.g., `fingerprint-generator.ts`)
+- Hooks: `useCamelCase.ts` (e.g., `useProfiles.ts`)
+
+### React components
+```typescript
+import { useState } from 'react';
+import { Icon } from 'lucide-react';
+import type { Type } from '../lib/supabase';
+
+interface Props {
+  value: string;
+  onChange: (v: string) => void;
+}
+
+export default function MyComponent({ value, onChange }: Props) {
+  // useState, handlers, return JSX
+}
+```
+- Always `export default function`, not arrow functions
+- Props interface inside the file, NOT exported
+- Destructure props in function parameters
+- Event handlers: `handleSubmit`, `handleDelete`, etc.
+- Errors: `try/catch` + `toast.error(err.message)`
+
+### Hooks
+```typescript
+export function useMyData() {
+  const [data, setData] = useState<Type[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => { ... }, []);
+  useEffect(() => { fetch(); }, [fetch]);
+
+  const create = async (input: CreateInput) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data, error } = await supabase.from('table').insert({ ...input, user_id: user.id }).select().single();
+    if (error) throw error;
+    setData(prev => [data, ...prev]);
+    return data;
+  };
+
+  return { data, loading, create };
+}
+```
+
+### Supabase patterns
+- Always `.select().single()` after insert/update
+- Always get `user_id` from `supabase.auth.getUser()` before insert
+- Bulk operations: `.in('id', ids)`
+- Optimistic local state updates after successful DB operations
+
+### IPC (adding new methods)
+1. `electron/main.ts`: `ipcMain.handle('namespace:method', handler)`
+2. `electron/preload.ts`: add to `contextBridge.exposeInMainWorld`
+3. `src/vite-env.d.ts`: add to `ElectronAPI` interface
+4. Use in React: `const result = await window.electronAPI.myMethod(...)`
+
+### Tailwind classes
+- Use existing utility classes: `.btn-primary`, `.btn-secondary`, `.btn-danger`, `.input-field`, `.select-field`, `.card`, `.badge-*`
+- Colors: `ghost-50..950` (background), `accent` (primary actions), `success`, `warning`, `danger`
+- Modals: `fixed inset-0 bg-black/60 flex items-center justify-center z-50`
+- Transitions: `transition-colors duration-150`
+- Loading spinner: `animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent`
+
+### Fingerprint changes
+To add a new fingerprint parameter:
+1. Add field to `BrowserFingerprint` interface in `src/lib/supabase.ts`
+2. Add generation logic in `fingerprint-generator.ts`
+3. Add API override in `fingerprint-injector.ts` (use `Object.defineProperty` or prototype method interception)
+4. Add UI control in `FingerprintEditor.tsx`
+5. No DB migration needed (JSONB column)
+
+## What NOT to do
+
+- Do NOT use `any` unless interfacing with Electron IPC or Supabase JSONB
+- Do NOT create wrapper/utility files for one-time operations
+- Do NOT add comments to obvious code
+- Do NOT leave TODO/placeholder/stub functions — every function must be complete
+- Do NOT import Playwright in `src/` (renderer) — it's main-process only
+- Do NOT make Supabase calls from Electron main process — that's renderer's job
+- Do NOT create light theme code — dark theme only
+- Do NOT use `class` components — functional only
+- Do NOT skip error handling in async operations

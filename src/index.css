@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-ghost-900 text-gray-100 font-sans antialiased;
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-ghost-800;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-ghost-600 rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ghost-500;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 bg-accent text-white rounded-lg font-medium
+           hover:bg-accent-hover transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-ghost-700 text-gray-200 rounded-lg font-medium
+           hover:bg-ghost-600 transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 bg-danger text-white rounded-lg font-medium
+           hover:bg-red-600 transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 bg-ghost-800 border border-ghost-600 rounded-lg
+           text-gray-100 placeholder-gray-500
+           focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent
+           transition-colors duration-150;
+  }
+
+  .select-field {
+    @apply w-full px-3 py-2 bg-ghost-800 border border-ghost-600 rounded-lg
+           text-gray-100 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent
+           transition-colors duration-150 appearance-none cursor-pointer;
+  }
+
+  .card {
+    @apply bg-ghost-800 rounded-xl border border-ghost-700 p-4;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-new { @apply bg-blue-900/50 text-blue-300; }
+  .badge-active { @apply bg-green-900/50 text-green-300; }
+  .badge-running { @apply bg-yellow-900/50 text-yellow-300; }
+  .badge-blocked { @apply bg-red-900/50 text-red-300; }
+}
