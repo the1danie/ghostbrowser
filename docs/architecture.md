@@ -2,7 +2,7 @@
 
 ## Обзор
 
-GhostBrowser — open-source antidetect browser (аналог Dolphin Anty).
+GhostBrowser — open-source antidetect browser (клон Dolphin Anty).
 Стек: **Electron + React + TypeScript + Tailwind CSS + Supabase + Playwright**.
 
 ## Слои приложения

@@ -1,6 +1,8 @@
 # GhostBrowser
 
-GhostBrowser — open-source antidetect browser на `Electron + React + Supabase + Playwright`.
+GhostBrowser — open-source antidetect browser (клон Dolphin Anty) на `Electron + React + Supabase + Playwright`.
+
+English guide: `README.en.md`
 
 Проект позволяет:
 - управлять множеством браузерных профилей;

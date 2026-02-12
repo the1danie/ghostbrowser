@@ -1,6 +1,7 @@
 # GhostBrowser Docs Index
 
 Это карта документации проекта.
+English docs: `en/README.md`
 
 ## С чего начать
 
@@ -24,4 +25,3 @@
 3. `project-structure.md`
 4. `database.md`
 5. `electron-ipc.md`
-
