@@ -4,7 +4,7 @@ Original author and creator of this project:
 
 - Name: Daniyal Abuov
 - GitHub: [@the1danie](https://github.com/the1danie)
-- Contact: danielsioo75@gmail.com
+- Contact: bombuuk@gmail.com
 
 Copyright notice:
 

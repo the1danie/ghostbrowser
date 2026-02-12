@@ -13,7 +13,7 @@ This project is a **clone of Dolphin Anty** and provides:
 ## Authorship
 
 - Original author: **Daniyal Abuov** (GitHub: **[@the1danie](https://github.com/the1danie)**)
-- Contact: **danielsioo75@gmail.com**
+- Contact: **bombuuk@gmail.com**
 - Dedicated authorship file: `AUTHORSHIP.md`
 
 ---

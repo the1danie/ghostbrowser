@@ -15,7 +15,7 @@ English guide: `README.en.md`
 ## Авторство
 
 - Оригинальный автор проекта: **Daniyal Abuov** (GitHub: **[@the1danie](https://github.com/the1danie)**)
-- Контакт: **danielsioo75@gmail.com**
+- Контакт: **bombuuk@gmail.com**
 - Отдельный файл с авторством: `AUTHORSHIP.md`
 
 ---
